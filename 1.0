@@ -1,0 +1,129 @@
+#===============================================================================================================================
+#| Código criado por Chainho e Igu no dia 18/11/2024                                                                           |      
+#| Este script tem como objetivo consolidar e processar dados de arquivos Excel (.xls),                                        |  
+#| realizando as seguintes etapas:                                                                                             |      
+#| 1. Leitura dos arquivos Excel em um diretório específico.                                                                   |  
+#| 2. Processamento e transformação dos dados, incluindo:                                                                      |  
+#|    - Normalização das colunas.                                                                                              |                     
+#|    - Conversão do valor monetário para o formato correto (remover separadores de milhar e substituir vírgula por ponto).    |  
+#|    - Conversão da data para o formato padrão (dd/mm/aaaa).                                                                  |  
+#|3. Consolidação dos dados em um DataFrame.                                                                                   |              
+#|4. Geração de um arquivo final no formato .txt, com separador de ponto e vírgula, e codificação UTF-8.                       |     
+#|5. Movimentação dos arquivos processados para um diretório de destino.                                                       |              
+#|6. O script lida com exceções e garante que dados inválidos sejam descartados de forma segura.                               |
+#===============================================================================================================================
+import pandas as pd
+import shutil
+import os
+
+# Defina o diretório onde estão os arquivos Excel
+diretorio = r"\\Caminho do arquivo"
+diretorio_destino = r"Caminho do arquivo"
+arquivos = [f for f in os.listdir(diretorio) if f.endswith('.xls')]
+
+# Inicialize um DataFrame vazio para consolidar os dados
+dados_consolidados = pd.DataFrame()
+
+# Leia e consolide os dados de cada arquivo
+for arquivo in arquivos:
+    caminho_arquivo = os.path.join(diretorio, arquivo)
+    print(f"Lendo arquivo: {arquivo}")
+    try:
+        # Determinar qual engine usar (xlrd para .xls e openpyxl para .xlsx)
+        if arquivo.endswith('.xls'):
+            # Usar xlrd para arquivos .xls
+            df = pd.read_excel(caminho_arquivo, engine="xlrd")
+        else:
+            # Usar openpyxl para arquivos .xlsx
+            df = pd.read_excel(caminho_arquivo, engine="openpyxl")
+
+        # Verificar as colunas logo após a leitura
+        print(f"Colunas do arquivo {arquivo}: {df.columns.tolist()}")
+
+        # Verificar as primeiras linhas do arquivo para depuração
+        print(f"Primeiras linhas do arquivo {arquivo}:")
+        print(df.head())
+
+        # Normalizar os nomes das colunas removendo espaços e caracteres invisíveis
+        df.columns = df.columns.str.strip().str.upper()
+        
+        # Verificar as colunas após normalização
+        print(f"Colunas após normalização no arquivo {arquivo}: {df.columns.tolist()}")
+
+        # Verificar se as colunas específicas existem no arquivo
+        if 'CPF/CNPJ' in df.columns and 'VALOR' in df.columns and 'VENC. PARCELA' in df.columns:
+            print(f"As colunas necessárias foram encontradas no arquivo {arquivo}.")
+            
+            # Renomear as colunas relevantes
+            df.rename(
+                columns={
+                    'CPF/CNPJ': 'NU_CPF_CNPJ_OU_ID_CLIENTE',
+                    'VALOR': 'VALOR',
+                    'VENC. PARCELA': 'DATA_VENC'
+                },
+                inplace=True
+            )
+
+            # Verificar se as colunas renomeadas estão presentes
+            print(f"Colunas após renomeação no arquivo {arquivo}: {df.columns.tolist()}")
+
+            # Limpar o CPF/CNPJ, deixando apenas números (sem símbolos)
+            df['NU_CPF_CNPJ_OU_ID_CLIENTE'] = df['NU_CPF_CNPJ_OU_ID_CLIENTE'].astype(str).str.replace(r'\D', '', regex=True)
+
+            # Tratar o VALOR - garantir que os valores estejam corretamente formatados
+            # 1. Limpar separador de milhar (pontos) e vírgula como separador decimal
+            df['VALOR'] = df['VALOR'].astype(str).str.replace(r'\.', '', regex=True)  # Remove ponto (milhares)
+            df['VALOR'] = df['VALOR'].str.replace(',', '.', regex=False)  # Substitui vírgula por ponto
+
+            # 2. Converter para numérico (float) e forçar coerção de valores inválidos para NaN
+            df['VALOR'] = pd.to_numeric(df['VALOR'], errors='coerce')  # Coerce para lidar com valores inválidos
+
+            # Verificar se há valores inválidos no VALOR
+            print(f"Valores de VALOR do arquivo {arquivo}:")
+            print(df['VALOR'].head())
+
+            # Garantir que a coluna 'DATA_VENC' seja convertida corretamente para datetime
+            df['DATA_VENC'] = pd.to_datetime(df['DATA_VENC'], errors='coerce')
+
+            # Mostrar as primeiras linhas do DataFrame após o processamento
+            print(f"Primeiras linhas do arquivo {arquivo} após processamento:")
+            print(df[['NU_CPF_CNPJ_OU_ID_CLIENTE', 'VALOR', 'DATA_VENC']].head())
+
+            # Adicionar os dados consolidados
+            dados_consolidados = pd.concat([dados_consolidados, df[['NU_CPF_CNPJ_OU_ID_CLIENTE', 'VALOR', 'DATA_VENC']]], ignore_index=True)
+
+        else:
+            print(f"Arquivo {arquivo} não contém as colunas necessárias. Colunas presentes: {df.columns.tolist()}")
+
+        # Mover o arquivo para o diretório de destino
+        shutil.move(caminho_arquivo, os.path.join(diretorio_destino, arquivo))
+        print(f"Arquivo {arquivo} movido para {diretorio_destino}")
+    except Exception as e:
+        print(f"Erro ao processar {arquivo}: {e}")
+
+# Garantir que os valores em 'VALOR' estejam no formato correto, com ponto como separador decimal
+# Converte para string com 2 casas decimais e mantém o ponto como separador decimal
+dados_consolidados['VALOR'] = dados_consolidados['VALOR'].apply(lambda x: f"{x:.2f}")  # Ponto como separador decimal
+
+# Verificar se a coluna 'DATA_VENC' está presente no DataFrame consolidado
+if 'DATA_VENC' in dados_consolidados.columns:
+    # Verificar se a conversão de data foi bem-sucedida
+    if dados_consolidados['DATA_VENC'].isnull().any():
+        print("Algumas datas não foram convertidas corretamente.")
+    # Converter a coluna 'DATA_VENC' para o formato desejado
+    dados_consolidados['DATA_VENC'] = dados_consolidados['DATA_VENC'].dt.strftime('%d/%m/%Y')
+else:
+    print("Coluna 'DATA_VENC' não encontrada no DataFrame consolidado.")
+
+# Mostrar as primeiras linhas do DataFrame consolidado
+print("Primeiras linhas do DataFrame consolidado:")
+print(dados_consolidados.head())
+
+# Verificar se o DataFrame consolidado está vazio
+if dados_consolidados.empty:
+    print("O DataFrame consolidado está vazio. Verifique os dados de entrada.")
+else:
+    # Salvar os dados consolidados em um novo arquivo .txt
+    novo_arquivo_txt = r"\\Caminho final do arquivo"
+    dados_consolidados.to_csv(novo_arquivo_txt, sep=';', index=False, encoding='utf-8')
+    print(f"Arquivo consolidado salvo como Texto: {novo_arquivo_txt}")
